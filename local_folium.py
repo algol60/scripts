@@ -16,9 +16,19 @@
 # about with directory trees. The mapping from original URL to downloaded
 # file is stored in zzdownloaded.json.
 #
-# To modify the folium source code at D:\tmp\git\folium\folium to use http://localhost:8000 and download the files to D:\tmp\cdn
+# - git clone folium from github to D:/tmp/git (for example).
+# - git checkout the required version.
+# - to modify the folium source code at D:\tmp\git\folium\folium to use http://localhost:8000 and download the files to D:\tmp\cdn:
 # python .\local_folium.py --dir D:\tmp\git\folium\folium --url http://localhost:8000 --download D:\tmp\cdn
 #
+# This will produce a directory full of files at D:/tmp/cdn.
+# - copy the files and this script (and optionally the modified clone) to an offline PC.
+# - put the downloaded files in a web accessible place.
+# - if the clone is available, rerun without --download to modify the source files; use the correct --url.
+# - edit folium/_version.py to set the version.
+# - if desired, edit setup.py to change the wheel name.
+# - build the modified folium: `python -m build -w -n`.`
+# - publish the wheel.
 
 import argparse
 from hashlib import sha1
