@@ -38,6 +38,12 @@ import re
 import requests
 import sys
 
+# A unique placeholder string.
+# In the first pass, the original URLs will be replaced with f'{PLACEHOLDER}/newname.ext'.
+# In the second pass, the placeholder will be replaced with the new URL base path.
+#
+PLACEHOLDER = '__mystery://placeholder__'
+
 # For our purposes, a URL is a quoted string containing https://...
 # where ... are any non-quote characters.
 #
@@ -79,12 +85,7 @@ def url_to_name(u):
     return f'{name}{Path(u).suffix}'
 
 class UrlModifier:
-    def __init__(self, local_url):
-        while local_url.endswith('/'):
-            local_url = local_url[:-1]
-
-        self.local_url = local_url
-
+    def __init__(self):
         # Map original URLS to local URLs.
         #
         self.url_map = {}
@@ -108,26 +109,31 @@ class UrlModifier:
         print(line, end='')
         b, e = m.span()
         old_u = line[b+1:e-1]
-        if old_u not in self.url_map:
-            name = url_to_name(old_u)
 
-            line = f'{line[:b+1]}{self.local_url}/{name}{line[e-1:]}'
-            print(line)
+        name = url_to_name(old_u)
 
-            self.url_map[old_u] = name
+        line = f'{line[:b+1]}{PLACEHOLDER}/{name}{line[e-1:]}'
+        print(line)
+
+        # If old_u has been seen before, it will already be in url_map.
+        # This is fine - identical old_u values will map to identical hashes,
+        # so just overwriting it is fine.
+        #
+        self.url_map[old_u] = name
 
         return line
 
-    def process_py(self, folium_dir):
+    def process_py(self, folium_p):
         """Look for https URLs in strings.
 
         Assume one per line."""
 
-        for p in folium_dir.glob('**/*.py'):
+        for p in folium_p.glob('**/*.py'):
             with p.open(encoding='UTF-8') as f:
                 old_lines = f.readlines()
                 upd_lines = [self.local_https(line) for line in old_lines]
                 if upd_lines!=old_lines:
+                    print(f'Folium: {p}')
                     with p.open('w', newline='', encoding='UTF_8') as f:
                         f.writelines(upd_lines)
 
@@ -155,7 +161,7 @@ class UrlModifier:
                     if (ix:=u2.find('?'))>=0:
                         # Remove IE8 fix.
                         #
-                        u2 = u2[:ix-1]
+                        u2 = u2[:ix]
 
                     if u2.startswith(('data:', '#', '%')):
                         # Inline data - don't do anything.
@@ -172,7 +178,7 @@ class UrlModifier:
                             download_file(u2, local_dir, name2)
                             self.url_map[u2] = name2
 
-                        text = f'{text[:b]}{self.local_url}/{name2}{text[e:]}'
+                        text = f'{text[:b]}{PLACEHOLDER}/{name2}{text[e:]}'
 
                         matched = True
 
@@ -191,10 +197,10 @@ class UrlModifier:
 
             download_file(old_u, local_dir, name)
 
-        self.download_from_css(local_dir)
+        # self.download_from_css(local_dir)
 
-        with open(local_dir / 'zzdownloaded.json', 'w', encoding='UTF-8') as f:
-            json.dump(self.url_map, f, indent=2)
+        # with open(local_dir / 'zzdownloaded.json', 'w', encoding='UTF-8') as f:
+        #     json.dump(self.url_map, f, indent=2)
 
 def download_file(u, local_dir, name):
     r = requests.get(u)
@@ -202,38 +208,71 @@ def download_file(u, local_dir, name):
     with local_file.open('wb') as f:
         f.write(r.content)
 
+def _process(args):
+    if not args.folium:
+        print('Must specify the folium root directory.')
+        sys.exit(1)
+
+    folium_p = Path(args.folium)
+    um = UrlModifier()
+    um.process_py(folium_p)
+
+    if args.dir:
+        local_dir_p = Path(args.dir)
+
+        um.download_from_py(local_dir_p)
+        um.download_from_css(local_dir_p)
+
+        with open(local_dir_p / 'zzdownloaded.json', 'w', encoding='UTF-8') as f:
+            json.dump(um.url_map, f, indent=2)
+
+def _replace(args):
+    while local_url.endswith('/'):
+        local_url = local_url[:-1]
+
+    self.local_url = local_url
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         prog='local_folium',
         description='Update folium .py files to use local versions of CDN files'
     )
+    subparsers = parser.add_subparsers(required=True)
 
-    parser.add_argument('--dir', help='Root directory of folium files')
-    parser.add_argument('--url', help='The base of the local URL')
-    parser.add_argument('--download', help='Download the files to the specified directory')
+    parser_process = subparsers.add_parser('process')
+    parser_process.add_argument('--folium', help='Root directory of folium files')
+    parser_process.add_argument('--dir', help='The directory where the downloaded files will be put (optional)')
+    parser_process.set_defaults(func=_process)
+
+    parser_replace = subparsers.add_parser('replace')
+    parser_replace.add_argument('--dir', help='The directory where the files were downloaded to')
+    parser_replace.add_argument('--url', help='The base of the local URL')
+    parser_replace.set_defaults(func=_replace)
+
+    # parser.add_argument('--dir', help='Root directory of folium files')
+    # parser.add_argument('--url', help='The base of the local URL')
+    # parser.add_argument('--download', help='Download the files to the specified directory')
 
     args = parser.parse_args()
+    args.func(args)
 
-    if not args.dir:
-        print('Must specify the folium root directory.')
-        sys.exit(1)
+    # if not args.url:
+    #     print('Must specify the replacement base URL')
+    #     sys.exit(2)
 
-    if not args.url:
-        print('Must specify the replacement base URL')
-        sys.exit(2)
+    # if args.download:
+    #     local_dir = Path(args.download)
+    #     if not local_dir.is_dir():
+    #         print('Download directory {d} does not exist')
+    #         sys.exit(3)
 
-    if args.download:
-        local_dir = Path(args.download)
-        if not local_dir.is_dir():
-            print('Download directory {d} does not exist')
-            sys.exit(3)
+    # repl_url = args.url
 
-    repl_url = args.url
+    # # um = UrlModifier(args.url)
+    # # um.process_py(Path(args.dir))
 
-    um = UrlModifier(args.url)
-    um.process_py(Path(args.dir))
-
-    print(f'{args.download=}')
-    if args.download:
-        local_dir = Path(args.download)
-        um.download_from_py(local_dir)
+    # print(f'{args.download=}')
+    # if args.download:
+    #     local_dir = Path(args.download)
+    #     um.download_from_py(local_dir)
