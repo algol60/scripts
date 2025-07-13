@@ -1,31 +1,44 @@
 #
 
 # A script that modifies folium to work offline.
+#
+# Problem: We want to use folium off-line, ie no Internet available.
+#
 # Folium requires files that are typically downloaded from CDNs.
 # This doesn't work if there is no Internet.
-# Therefore, we look through the folium .py files for https URLs,
-# update the .py files with a local URL, and overwrite the .py files.
+# Futhermore, referenced CSS files themselves contain references to
+# Internet files using url(). These also have to be processed.
 #
-# Extra step: downloaded CSS files themselves contain references to
-# Internet files using url(). Thes also have to be processed.
-# For each .css file, look for url(), determine the right thing to download
+# Therefore, we look through the folium .py files for https URLs,
+# download the referenced files (renaming them, see below),
+# update the .py files with a local URL, and overwrite the .py files.
+# For each downloaded .css file, look for url(...), determine the right thing to download
 # (taking relative URLs into account), and update the .css file.
 #
 # Note that all downloaded files are written to files called (sha1 of URL).ext.
 # This ensures that unique URLs produce unique filenames, and avoids mucking
 # about with directory trees. The mapping from original URL to downloaded
-# file is stored in zzdownloaded.json.
+# file is stored in zzdownloaded.json for reference.
 #
+# The script is run as a multi-stage process.
+#
+# While connected to the Internet:
 # - git clone folium from github to D:/tmp/git (for example).
 # - git checkout the required version.
-# - to modify the folium source code at D:\tmp\git\folium\folium to use http://localhost:8000 and download the files to D:\tmp\cdn:
-# python .\local_folium.py --dir D:\tmp\git\folium\folium --url http://localhost:8000 --download D:\tmp\cdn
+# - to modify the folium source code at D:\tmp\git\folium\folium and download the files to D:\tmp\cdn:
+# $ python .\local_folium.py --folium D:\tmp\git\folium\folium --dir D:\tmp\cdn process
 #
-# This will produce a directory full of files at D:/tmp/cdn.
-# - copy the files and this script (and optionally the modified clone) to an offline PC.
-# - put the downloaded files in a web accessible place.
-# - if the clone is available, rerun without --download to modify the source files; use the correct --url.
-# - edit folium/_version.py to set the version.
+# This will modify the folium .py files and produce a directory full of files at D:/tmp/cdn.
+#
+# - copy the downloaded files off-line. Optionally copy the modified folium files.
+#
+# If there is a copy of the original folium files off-line, we just want to modify the files:
+# $ python .\local_folium.py --folium D:\tmp\git\folium\folium process
+#
+# Replace the placeholder URL in the .py files and the downloaded files.
+#
+# $ python .\local_folium.py --folium D:\tmp\git\folium\folium --dir D:\tmp\cdn replace --url https://local_cdn/base
+#
 # - if desired, edit setup.py to change the wheel name.
 # - build the modified folium: `python -m build -w -n`.`
 # - publish the wheel.
@@ -82,7 +95,11 @@ def url_to_name(u):
 
     name = sha1(u.encode('UTF-8')).hexdigest()
 
-    return f'{name}{Path(u).suffix}'
+    suffix = Path(u).suffix
+    if (ix:=suffix.find('#')):
+        suffix = suffix[:ix]
+
+    return f'{name}{suffix}'
 
 class UrlModifier:
     def __init__(self):
@@ -227,52 +244,46 @@ def _process(args):
             json.dump(um.url_map, f, indent=2)
 
 def _replace(args):
-    while local_url.endswith('/'):
-        local_url = local_url[:-1]
+    """Replace the placeholder in the specified files with the actual URL."""
 
-    self.local_url = local_url
+    def replace(base, pattern, url):
+        for p in base.glob(pattern):
+            with p.open(encoding='UTF-8') as f:
+                buf = f.read()
 
+            if buf.find(PLACEHOLDER)>=0:
+                print(p)
+                buf = buf.replace(PLACEHOLDER, url)
+
+                with p.open('w', encoding='UTF-8') as f:
+                    f.write(buf)
+
+    folium_p = Path(args.folium)
+    local_dir_p = Path(args.dir)
+    url = args.url.rstrip('/')
+
+    replace(folium_p, '**/*.py', url)
+    replace(local_dir_p, '**/*.css', url)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         prog='local_folium',
         description='Update folium .py files to use local versions of CDN files'
     )
+    parser.add_argument('--folium', help='Root directory of folium files')
+    parser.add_argument('--dir', help='The directory where the downloaded files will be put (optional)')
     subparsers = parser.add_subparsers(required=True)
 
     parser_process = subparsers.add_parser('process')
-    parser_process.add_argument('--folium', help='Root directory of folium files')
-    parser_process.add_argument('--dir', help='The directory where the downloaded files will be put (optional)')
+    # parser_process.add_argument('--folium', help='Root directory of folium files')
+    # parser_process.add_argument('--dir', help='The directory where the downloaded files will be put (optional)')
     parser_process.set_defaults(func=_process)
 
     parser_replace = subparsers.add_parser('replace')
-    parser_replace.add_argument('--dir', help='The directory where the files were downloaded to')
+    # parser_process.add_argument('--folium', help='Root directory of folium files')
+    # parser_replace.add_argument('--dir', help='The directory where the files were downloaded to')
     parser_replace.add_argument('--url', help='The base of the local URL')
     parser_replace.set_defaults(func=_replace)
 
-    # parser.add_argument('--dir', help='Root directory of folium files')
-    # parser.add_argument('--url', help='The base of the local URL')
-    # parser.add_argument('--download', help='Download the files to the specified directory')
-
     args = parser.parse_args()
     args.func(args)
-
-    # if not args.url:
-    #     print('Must specify the replacement base URL')
-    #     sys.exit(2)
-
-    # if args.download:
-    #     local_dir = Path(args.download)
-    #     if not local_dir.is_dir():
-    #         print('Download directory {d} does not exist')
-    #         sys.exit(3)
-
-    # repl_url = args.url
-
-    # # um = UrlModifier(args.url)
-    # # um.process_py(Path(args.dir))
-
-    # print(f'{args.download=}')
-    # if args.download:
-    #     local_dir = Path(args.download)
-    #     um.download_from_py(local_dir)
