@@ -24,7 +24,7 @@
 #
 # While connected to the Internet:
 # - git clone folium from github to D:/tmp/git (for example).
-# - git checkout the required version.
+# - "git checkout tag"  the required version by looking at the tags ()"git tag".).
 # - to modify the folium source code at D:\tmp\git\folium\folium and download the files to D:\tmp\cdn:
 # $ python .\local_folium.py --folium D:\tmp\git\folium\folium --dir D:\tmp\cdn process
 #
@@ -39,8 +39,10 @@
 #
 # $ python .\local_folium.py --folium D:\tmp\git\folium\folium --dir D:\tmp\cdn replace --url https://local_cdn/base
 #
-# - if desired, edit setup.py to change the wheel name.
-# - build the modified folium: `python -m build -w -n`.`
+# - edit setup.py to change the wheel name; change name="...".
+# - build the modified folium (requires setuptools, setuptools_scm, wheel)
+# > $env:SETUPTOOLS_SCM_PRETEND_VERSION='0.20.0'
+# > python -m build -w -n
 # - publish the wheel.
 
 import argparse
@@ -96,7 +98,7 @@ def url_to_name(u):
     name = sha1(u.encode('UTF-8')).hexdigest()
 
     suffix = Path(u).suffix
-    if (ix:=suffix.find('#')):
+    if (ix:=suffix.find('#')>=0):
         suffix = suffix[:ix]
 
     return f'{name}{suffix}'
@@ -246,24 +248,37 @@ def _process(args):
 def _replace(args):
     """Replace the placeholder in the specified files with the actual URL."""
 
-    def replace(base, pattern, url):
+    def replace(base, pattern, url_prefix):
         for p in base.glob(pattern):
             with p.open(encoding='UTF-8') as f:
                 buf = f.read()
 
             if buf.find(PLACEHOLDER)>=0:
-                print(p)
-                buf = buf.replace(PLACEHOLDER, url)
+                buf = buf.replace(PLACEHOLDER+'/', url_prefix)
 
                 with p.open('w', encoding='UTF-8') as f:
                     f.write(buf)
 
     folium_p = Path(args.folium)
     local_dir_p = Path(args.dir)
-    url = args.url.rstrip('/')
+    url = args.url.rstrip('/') + '/'
 
     replace(folium_p, '**/*.py', url)
-    replace(local_dir_p, '**/*.css', url)
+
+    # # In CSS files we can use relative URLs.
+    # #
+    # ix = url.index('//')
+    # ix = url.index('/', ix+2)
+    # url = url[ix:]
+    # replace(local_dir_p, '**/*.css', url)
+
+    # In CSS, files are relative to the CSS.
+    # Therefore, since all of the downloaded files are in the same directory,
+    # we only need the name.
+    #
+    ix = url.rindex('/')
+    url = url[ix+1:]
+    replace(local_dir_p, '**/*.css', '')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
